@@ -1,0 +1,137 @@
+[
+  {
+    "rank": 1,
+    "method": "adaptive",
+    "dimensions_mm": [
+      166.02409638554215,
+      6.506024096385541
+    ],
+    "area_mm2": 330.1495137175206,
+    "aspect_ratio": 25.51851851851852,
+    "bbox": [
+      586,
+      1672,
+      689,
+      27
+    ],
+    "center": [
+      930,
+      1685
+    ],
+    "score": 500,
+    "pliers_analysis": {
+      "length_ok": true,
+      "width_ok": true,
+      "aspect_ok": true,
+      "likely_pliers": true
+    }
+  },
+  {
+    "rank": 2,
+    "method": "edge",
+    "dimensions_mm": [
+      253.01204819277106,
+      7.951807228915662
+    ],
+    "area_mm2": 306.5757003919291,
+    "aspect_ratio": 31.818181818181817,
+    "bbox": [
+      225,
+      1666,
+      1050,
+      33
+    ],
+    "center": [
+      750,
+      1682
+    ],
+    "score": 318.1818181818182,
+    "pliers_analysis": {
+      "length_ok": false,
+      "width_ok": true,
+      "aspect_ok": true,
+      "likely_pliers": false
+    }
+  },
+  {
+    "rank": 3,
+    "method": "adaptive",
+    "dimensions_mm": [
+      174.93975903614455,
+      94.4578313253012
+    ],
+    "area_mm2": 481.1148207286978,
+    "aspect_ratio": 1.8520408163265305,
+    "bbox": [
+      241,
+      1086,
+      726,
+      392
+    ],
+    "center": [
+      604,
+      1282
+    ],
+    "score": 200,
+    "pliers_analysis": {
+      "length_ok": true,
+      "width_ok": false,
+      "aspect_ok": false,
+      "likely_pliers": false
+    }
+  },
+  {
+    "rank": 4,
+    "method": "adaptive",
+    "dimensions_mm": [
+      21.686746987951807,
+      6.746987951807228
+    ],
+    "area_mm2": 34.11235302656408,
+    "aspect_ratio": 3.2142857142857144,
+    "bbox": [
+      494,
+      1671,
+      90,
+      28
+    ],
+    "center": [
+      539,
+      1685
+    ],
+    "score": 150,
+    "pliers_analysis": {
+      "length_ok": false,
+      "width_ok": true,
+      "aspect_ok": false,
+      "likely_pliers": false
+    }
+  },
+  {
+    "rank": 5,
+    "method": "adaptive",
+    "dimensions_mm": [
+      20.481927710843372,
+      7.469879518072289
+    ],
+    "area_mm2": 59.92161416751341,
+    "aspect_ratio": 2.7419354838709675,
+    "bbox": [
+      310,
+      1668,
+      85,
+      31
+    ],
+    "center": [
+      352,
+      1683
+    ],
+    "score": 100,
+    "pliers_analysis": {
+      "length_ok": false,
+      "width_ok": true,
+      "aspect_ok": false,
+      "likely_pliers": false
+    }
+  }
+]

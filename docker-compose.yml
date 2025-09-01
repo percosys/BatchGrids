@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with PostGIS
+  db:
+    image: postgis/postgis:15-3.4
+    container_name: batchgrids_db
+    environment:
+      POSTGRES_DB: batchgrids
+      POSTGRES_USER: batchgrids
+      POSTGRES_PASSWORD: batchgrids_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U batchgrids -d batchgrids"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: batchgrids_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO for S3-compatible storage
+  minio:
+    image: minio/minio:latest
+    container_name: batchgrids_minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # FastAPI Backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: batchgrids_api
+    environment:
+      DATABASE_URL: postgresql://batchgrids:batchgrids_dev@db:5432/batchgrids
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin123
+      S3_BUCKET_NAME: batchgrids
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # Development watch mode (requires Docker Compose v2.22+)
+    # develop:
+    #   watch:
+    #     - action: rebuild
+    #       path: pyproject.toml
+    #     - action: sync
+    #       path: ./src
+    #       target: /app/src
+
+  # Celery Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: batchgrids_worker
+    environment:
+      DATABASE_URL: postgresql://batchgrids:batchgrids_dev@db:5432/batchgrids
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin123
+      S3_BUCKET_NAME: batchgrids
+      ENVIRONMENT: development
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: celery -A batchgrids.worker worker --loglevel=info
+    # Development watch mode (requires Docker Compose v2.22+)
+    # develop:
+    #   watch:
+    #     - action: rebuild
+    #       path: pyproject.toml
+    #     - action: sync
+    #       path: ./src
+    #       target: /app/src
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

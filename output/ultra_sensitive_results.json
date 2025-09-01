@@ -1,0 +1,236 @@
+{
+  "detection_method": "ultra_sensitive",
+  "pliers_candidates": [
+    {
+      "rank": 4,
+      "method": "adaptive_2",
+      "score": 262.5,
+      "length_mm": 122.9,
+      "width_mm": 5.8,
+      "area_mm2": 133.6,
+      "length_px": 510,
+      "width_px": 24,
+      "area_px": 2301,
+      "bbox": [
+        1327,
+        138,
+        24,
+        510
+      ],
+      "aspect_ratio": 21.25,
+      "is_pliers_size": true
+    },
+    {
+      "rank": 5,
+      "method": "adaptive_1",
+      "score": 251.73913043478262,
+      "length_mm": 111.8,
+      "width_mm": 5.5,
+      "area_mm2": 136.4,
+      "length_px": 464,
+      "width_px": 23,
+      "area_px": 2348,
+      "bbox": [
+        1328,
+        182,
+        23,
+        464
+      ],
+      "aspect_ratio": 20.17391304347826,
+      "is_pliers_size": true
+    }
+  ],
+  "all_measurements": [
+    {
+      "rank": 1,
+      "method": "adaptive_2",
+      "score": 502.3076923076923,
+      "length_mm": 141.7,
+      "width_mm": 3.1,
+      "area_mm2": 189.8,
+      "length_px": 588,
+      "width_px": 13,
+      "area_px": 3268,
+      "bbox": [
+        1333,
+        1086,
+        13,
+        588
+      ],
+      "aspect_ratio": 45.23076923076923,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 2,
+      "method": "adaptive_1",
+      "score": 487.82608695652175,
+      "length_mm": 242.7,
+      "width_mm": 5.5,
+      "area_mm2": 364.9,
+      "length_px": 1007,
+      "width_px": 23,
+      "area_px": 6285,
+      "bbox": [
+        1333,
+        667,
+        23,
+        1007
+      ],
+      "aspect_ratio": 43.78260869565217,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 3,
+      "method": "adaptive_2",
+      "score": 329.3333333333333,
+      "length_mm": 101.0,
+      "width_mm": 3.6,
+      "area_mm2": 120.2,
+      "length_px": 419,
+      "width_px": 15,
+      "area_px": 2070,
+      "bbox": [
+        1334,
+        667,
+        15,
+        419
+      ],
+      "aspect_ratio": 27.933333333333334,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 4,
+      "method": "adaptive_2",
+      "score": 262.5,
+      "length_mm": 122.9,
+      "width_mm": 5.8,
+      "area_mm2": 133.6,
+      "length_px": 510,
+      "width_px": 24,
+      "area_px": 2301,
+      "bbox": [
+        1327,
+        138,
+        24,
+        510
+      ],
+      "aspect_ratio": 21.25,
+      "is_pliers_size": true
+    },
+    {
+      "rank": 5,
+      "method": "adaptive_1",
+      "score": 251.73913043478262,
+      "length_mm": 111.8,
+      "width_mm": 5.5,
+      "area_mm2": 136.4,
+      "length_px": 464,
+      "width_px": 23,
+      "area_px": 2348,
+      "bbox": [
+        1328,
+        182,
+        23,
+        464
+      ],
+      "aspect_ratio": 20.17391304347826,
+      "is_pliers_size": true
+    },
+    {
+      "rank": 6,
+      "method": "adaptive_3",
+      "score": 158.0,
+      "length_mm": 19.0,
+      "width_mm": 1.2,
+      "area_mm2": 9.1,
+      "length_px": 79,
+      "width_px": 5,
+      "area_px": 156,
+      "bbox": [
+        195,
+        526,
+        79,
+        5
+      ],
+      "aspect_ratio": 15.8,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 7,
+      "method": "adaptive_3",
+      "score": 156.66666666666666,
+      "length_mm": 22.7,
+      "width_mm": 1.4,
+      "area_mm2": 9.0,
+      "length_px": 94,
+      "width_px": 6,
+      "area_px": 155,
+      "bbox": [
+        1138,
+        620,
+        94,
+        6
+      ],
+      "aspect_ratio": 15.666666666666666,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 8,
+      "method": "adaptive_3",
+      "score": 150.0,
+      "length_mm": 25.3,
+      "width_mm": 1.7,
+      "area_mm2": 10.2,
+      "length_px": 105,
+      "width_px": 7,
+      "area_px": 175,
+      "bbox": [
+        501,
+        1328,
+        7,
+        105
+      ],
+      "aspect_ratio": 15.0,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 9,
+      "method": "adaptive_1",
+      "score": 142.0,
+      "length_mm": 29.4,
+      "width_mm": 2.4,
+      "area_mm2": 15.0,
+      "length_px": 122,
+      "width_px": 10,
+      "area_px": 259,
+      "bbox": [
+        352,
+        1717,
+        10,
+        122
+      ],
+      "aspect_ratio": 12.2,
+      "is_pliers_size": false
+    },
+    {
+      "rank": 10,
+      "method": "adaptive_1",
+      "score": 138.1818181818182,
+      "length_mm": 46.7,
+      "width_mm": 5.3,
+      "area_mm2": 39.7,
+      "length_px": 194,
+      "width_px": 22,
+      "area_px": 684,
+      "bbox": [
+        143,
+        1702,
+        22,
+        194
+      ],
+      "aspect_ratio": 8.818181818181818,
+      "is_pliers_size": false
+    }
+  ],
+  "scale_px_per_mm": 4.15
+}

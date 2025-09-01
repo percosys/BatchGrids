@@ -1,0 +1,40 @@
+{
+  "apriltags": {
+    "detected": 2,
+    "positions": [
+      {
+        "center": [
+          389,
+          71
+        ],
+        "bbox": [
+          338,
+          0,
+          102,
+          142
+        ]
+      },
+      {
+        "center": [
+          1219,
+          67
+        ],
+        "bbox": [
+          1168,
+          0,
+          103,
+          135
+        ]
+      }
+    ]
+  },
+  "tool_detection": {
+    "detected": false,
+    "confidence": 0,
+    "class": null,
+    "bbox": null
+  },
+  "dimensions": {},
+  "processing_status": "partial",
+  "needs_review": true
+}
