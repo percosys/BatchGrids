@@ -5,6 +5,10 @@ import argparse
 import cv2
 import sys
 from pathlib import Path
+import threading
+import time
+import logging
+import os
 
 from batchgrids.vision.image_processor import ImageProcessor
 
@@ -15,6 +19,10 @@ def main():
     parser.add_argument("--output", "-o", help="Output directory for results", default="./cv_output")
     parser.add_argument("--show", "-s", action="store_true", help="Show debug visualization")
     parser.add_argument("--save-steps", action="store_true", help="Save intermediate processing steps")
+    parser.add_argument("--save-ruler-roi", action="store_true", help="Save detected ruler ROI crop if available")
+    parser.add_argument("--roi", help="Optional ROI crop 'x,y,w,h' applied before processing")
+    parser.add_argument("--span-mm", type=float, help="If set with --roi, treat ROI span on --span-axis as this many mm and override scale")
+    parser.add_argument("--span-axis", choices=["x", "y"], default="x", help="Axis to use with --span-mm (default: x)")
     
     args = parser.parse_args()
     
@@ -23,21 +31,61 @@ def main():
         print(f"Error: Image file not found: {args.image_path}")
         sys.exit(1)
     
+    # Ensure unbuffered stdout for timely logs
+    os.environ["PYTHONUNBUFFERED"] = "1"
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     # Create output directory
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True)
     
     try:
         # Initialize processor
-        print("Initializing computer vision pipeline...")
+        print("Initializing computer vision pipeline...", flush=True)
         processor = ImageProcessor()
         
-        # Load and process image
-        print(f"Loading image: {args.image_path}")
+        # Load and optionally crop image
+        print(f"Loading image: {args.image_path}", flush=True)
         image = processor.load_image(args.image_path)
+        px_per_mm_override = None
+        if args.roi:
+            try:
+                x, y, w, h = [int(v) for v in args.roi.split(',')]
+                h_img, w_img = image.shape[:2]
+                x = max(0, min(w_img - 1, x))
+                y = max(0, min(h_img - 1, y))
+                w = max(1, min(w_img - x, w))
+                h = max(1, min(h_img - y, h))
+                image = image[y:y+h, x:x+w]
+                print(f"Applied ROI crop: x={x}, y={y}, w={w}, h={h}", flush=True)
+                if args.span_mm and args.span_mm > 0:
+                    span_px = w if args.span_axis == 'x' else h
+                    px_per_mm_override = span_px / float(args.span_mm)
+                    print(f"Manual scale override from ROI: {px_per_mm_override:.3f} px/mm (axis={args.span_axis}, span_mm={args.span_mm})", flush=True)
+            except Exception as e:
+                print(f"Warning: failed to parse/apply ROI '{args.roi}': {e}", flush=True)
         
-        print("Processing image...")
-        result = processor.process_image(image)
+        print("Processing image...", flush=True)
+
+        # Heartbeat to confirm app is active
+        stop_evt = threading.Event()
+
+        def heartbeat():
+            start = time.time()
+            while not stop_evt.wait(5.0):
+                elapsed = time.time() - start
+                print(f"... still working ({elapsed:.1f}s elapsed)", flush=True)
+
+        hb = threading.Thread(target=heartbeat, daemon=True)
+        hb.start()
+        try:
+            result = processor.process_image(image, px_per_mm_override=px_per_mm_override)
+        finally:
+            stop_evt.set()
+            hb.join(timeout=1.0)
         
         # Print results
         print(f"\n=== PROCESSING RESULTS ===")
@@ -107,6 +155,13 @@ def main():
                 cv2.imwrite(str(output_dir / f"{base_name}_yolo.jpg"), yolo_viz)
             
             print("Individual processing steps saved to output directory")
+
+        # Save ruler ROI if requested and available
+        if args.save_ruler_roi and result.ruler_roi_bbox and result.rectified_image is not None:
+            x, y, w, h = result.ruler_roi_bbox
+            roi = result.rectified_image[y:y+h, x:x+w] if result.rectified_image is not None else image[y:y+h, x:x+w]
+            cv2.imwrite(str(output_dir / f"{base_name}_ruler_roi.jpg"), roi)
+            print(f"Ruler ROI saved: {output_dir / f'{base_name}_ruler_roi.jpg'}")
         
         # Save SVG outline
         if result.svg_outline:

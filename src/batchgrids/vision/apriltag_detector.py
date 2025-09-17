@@ -1,7 +1,16 @@
 import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-import apriltag
+try:
+    import apriltag  # type: ignore
+    _APRILTAG_BACKEND = 'apriltag'
+except Exception:
+    try:
+        from pupil_apriltags import Detector as PupilDetector  # type: ignore
+        _APRILTAG_BACKEND = 'pupil'
+    except Exception:
+        # No AprilTag backend - will use fallback methods
+        _APRILTAG_BACKEND = 'none'
 from dataclasses import dataclass
 
 from batchgrids.config import settings
@@ -33,7 +42,14 @@ class AprilTagDetector:
     
     def __init__(self, tag_family: str = None):
         self.tag_family = tag_family or settings.apriltag_family
-        self.detector = apriltag.Detector()
+        if _APRILTAG_BACKEND == 'apriltag':
+            self.detector = apriltag.Detector()
+        elif _APRILTAG_BACKEND == 'pupil':
+            # pupil-apriltags uses different init args; at minimum we set families
+            self.detector = PupilDetector(families=self.tag_family)
+        else:
+            # No backend available - detection will always fail gracefully
+            self.detector = None
         
         # Standard calibration mat setup (in mm)
         # Tags at corners of a known rectangle
@@ -50,6 +66,10 @@ class AprilTagDetector:
     
     def detect_tags(self, image: np.ndarray) -> List[AprilTagDetection]:
         """Detect AprilTags in image."""
+        if self.detector is None:
+            # No backend available - return empty list
+            return []
+            
         # Convert to grayscale if needed
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -61,10 +81,13 @@ class AprilTagDetector:
         
         results = []
         for detection in detections:
+            # pupil-apriltags returns numpy arrays similar to apriltag
+            center = detection.center
+            corners = detection.corners
             tag_detection = AprilTagDetection(
-                tag_id=detection.tag_id,
-                center=(detection.center[0], detection.center[1]),
-                corners=detection.corners
+                tag_id=int(detection.tag_id),
+                center=(float(center[0]), float(center[1])),
+                corners=np.asarray(corners, dtype=np.float32),
             )
             results.append(tag_detection)
         

@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BatchGrids – Tool Segmentation</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #151922;
+      --muted: #8b93a6;
+      --text: #e9edf3;
+      --accent: #2dd4bf;
+      --accent-2: #7e57c2;
+      --line: #212636;
+      --btn: #2a3040;
+      --btn-hover: #343b4f;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: linear-gradient(180deg, #0d1014 0%, #10131a 100%);
+      color: var(--text);
+    }
+    .app { max-width: 1200px; margin: 0 auto; padding: 16px; }
+    header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .brand { font-weight: 700; letter-spacing: 0.3px; }
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr 1fr auto;
+      gap: 10px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .tool {
+      display:flex; align-items:center; gap:8px; background:#0f131c; border:1px solid var(--line);
+      padding:6px 10px; border-radius:8px;
+    }
+    .tool label { font-size: 12px; color: var(--muted); }
+    input[type="file"] { color: var(--muted); }
+    input[type="number"], input[type="text"], input[type="range"] {
+      width: 100%; background: #0d1219; color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 8px;
+    }
+    input[type="range"] { padding: 0; height: 6px; }
+    .btn { background: var(--btn); color: var(--text); border: 1px solid var(--line); padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+    .btn:hover { background: var(--btn-hover); }
+    .layout { display: grid; grid-template-columns: 1fr 360px; gap: 14px; margin-top: 14px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+    #canvas { width: 100%; height: auto; display:block; background:#0b0f16; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#0e1320; border:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display:block; }
+    .svg-out { width: 100%; height: 300px; border: 1px solid var(--line); background:#0b0f16; color:var(--text); border-radius:8px; }
+    /* Make the SVG preview easy to see with a light background */
+    iframe.svg-out { background: #ffffff; border-color: #cbd5e1; }
+    /* Keep textarea and pre in the dark theme */
+    textarea.svg-out, pre.svg-out { background:#0b0f16; }
+    details { border-top:1px dashed var(--line); margin-top:10px; padding-top:10px; }
+    summary { outline:none; cursor:pointer; }
+    ul { margin: 8px 0 0 18px; padding:0; }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script>
+    let img = new Image();
+    let rulerPoints = [];
+    let toolPoints = []; // foreground seeds
+    let bgPoints = [];   // background seeds
+    let detections = [];
+    let currentOutline = [];
+    let pxPerMm = null;
+    let lastMaskB64 = null;
+    let procW = null, procH = null;
+    let smoothLevel = 0;
+    let offsetMm = 0;
+    let roi = null;      // {x,y,w,h}
+    let roiDrag = null;  // {x,y}
+    let mode = 'ruler';
+    let autoDetect = true;
+    let seedDetectTimer = null;
+    let seedDetectInFlight = false;
+    let pendingSeedRun = false;
+    function $(id){ return document.getElementById(id); }
+    function catmullRomToBezierPath(ctx, pts, closed) {
+      if (!pts || pts.length < 2) return;
+      const n = pts.length;
+      const last = closed ? n : n - 1;
+      // Move to first point
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 0; i < last; i++) {
+        const p0 = pts[(i - 1 + n) % n];
+        const p1 = pts[i % n];
+        const p2 = pts[(i + 1) % n];
+        const p3 = pts[(i + 2) % n];
+        const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+        const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+        const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+        const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, p2[0], p2[1]);
+      }
+      if (closed) ctx.closePath();
+    }
+
+    function drawCanvas() {
+      const canvas = $('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      // Ruler points (red)
+      if (rulerPoints.length > 0) {
+        ctx.fillStyle = '#ff4444';
+        for (const p of rulerPoints) { ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill(); }
+        if (rulerPoints.length === 2) { ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(rulerPoints[0].x, rulerPoints[0].y); ctx.lineTo(rulerPoints[1].x, rulerPoints[1].y); ctx.stroke(); }
+      }
+      // Tool seed points (blue) and background seeds (orange)
+      if (toolPoints.length > 0) {
+        ctx.fillStyle = '#1e88e5';
+        for (const p of toolPoints) { ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); }
+      }
+      if (bgPoints.length > 0) {
+        ctx.fillStyle = '#ff8f00';
+        for (const p of bgPoints) { ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); }
+      }
+      // Full detection overlays (light green)
+      if (detections.length > 0) {
+        ctx.strokeStyle = 'rgba(0,200,100,0.6)';
+        ctx.lineWidth = 1.5;
+        detections.forEach((d, idx) => {
+          if (!d.outline || d.outline.length < 2) return;
+          const sx = (procW && procW>0) ? (img.width / procW) : 1;
+          const sy = (procH && procH>0) ? (img.height / procH) : 1;
+          const pts = d.outline.map(p => [p[0]*sx, p[1]*sy]);
+          // Always draw base outline as polyline (no smoothing)
+          ctx.beginPath();
+          ctx.moveTo(pts[0][0], pts[0][1]);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+          ctx.closePath();
+          ctx.stroke();
+          const label = `${d.class_name || 'tool'} ${d.confidence ? (d.confidence*100).toFixed(0)+'%' : ''}`.trim();
+          const lx = d.outline[0][0]*sx; const ly = d.outline[0][1]*sy;
+          ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.font = '12px sans-serif'; ctx.fillText(label, lx+4, ly+14);
+          // Draw offset outline if present
+          if (d.offset_outline && d.offset_outline.length > 1) {
+            ctx.save();
+            ctx.strokeStyle = '#7e57c2';
+            ctx.lineWidth = 2;
+            const o = d.offset_outline.map(p => [p[0]*sx, p[1]*sy]);
+            if (smoothLevel > 0) catmullRomToBezierPath(ctx, o, true);
+            else { ctx.beginPath(); ctx.moveTo(o[0][0], o[0][1]); for (let i=1;i<o.length;i++) ctx.lineTo(o[i][0], o[i][1]); ctx.closePath(); }
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+      }
+      // Current outline (dark green)
+      if (currentOutline.length > 1) {
+        ctx.strokeStyle = '#00c853'; ctx.lineWidth = 2; ctx.beginPath();
+        const sx = (procW && procW>0) ? (img.width / procW) : 1;
+        const sy = (procH && procH>0) ? (img.height / procH) : 1;
+        const pts = currentOutline.map(p => [p[0]*sx, p[1]*sy]);
+        // Always draw base outline as polyline (no smoothing)
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+        ctx.stroke();
+        // Draw current offset outline if present
+        if (window.currentOffsetOutline && window.currentOffsetOutline.length > 1) {
+          ctx.save();
+          ctx.strokeStyle = '#7e57c2';
+          ctx.lineWidth = 2;
+          const o = window.currentOffsetOutline.map(p => [p[0]*sx, p[1]*sy]);
+          if (smoothLevel > 0) catmullRomToBezierPath(ctx, o, true);
+          else { ctx.beginPath(); ctx.moveTo(o[0][0], o[0][1]); for (let i=1;i<o.length;i++) ctx.lineTo(o[i][0], o[i][1]); ctx.closePath(); }
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+      // ROI overlay (yellow dashed)
+      if (roi) {
+        ctx.save();
+        ctx.strokeStyle = '#ffd54f';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
+        ctx.restore();
+      }
+    }
+    function loadFile(ev) {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        // Reset view for new image
+        zoom = 1; panX = 0; panY = 0;
+        drawCanvas();
+        // Auto-run AI-guided detection after image load
+        setTimeout(() => { runAIGuidedDetection(); }, 200);
+      };
+      img.src = url;
+      $('uploadStatus').textContent = file.name + ' (' + Math.round(file.size/1024) + ' KB)';
+      rulerPoints = []; toolPoints = []; bgPoints = []; detections = []; currentOutline = []; pxPerMm = null; lastMaskB64 = null; procW = null; procH = null;
+      $('points').textContent = 'Click two points along a known distance on the ruler...';
+      $('toolPoints').textContent = 'Click on the tool to seed detection. Add more clicks to refine.';
+      $('pxmm').textContent = '–'; $('status').textContent = ''; $('statusTool').textContent = '';
+      $('svg').value = ''; $('svgFrame').srcdoc = '';
+    }
+    function canvasCoords(ev) {
+      const rect = ev.target.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) * (ev.target.width / ev.target.clientWidth);
+      const y = (ev.clientY - rect.top) * (ev.target.height / ev.target.clientHeight);
+      return {x: Math.round(x), y: Math.round(y)};
+    }
+    function onCanvasClick(ev) {
+      if (!img.src) return;
+      const p = canvasCoords(ev);
+      if (mode === 'ruler') {
+        if (rulerPoints.length >= 2) rulerPoints = [];
+        rulerPoints.push(p);
+        $('points').textContent = rulerPoints.map((pp,i)=>`P${i+1}=(${pp.x},${pp.y})`).join('  ');
+      } else {
+        const seedType = document.querySelector('input[name="seedType"]:checked')?.value || 'fg';
+        if (seedType === 'bg') {
+          bgPoints.push(p);
+        } else {
+          toolPoints.push(p);
+        }
+        $('toolPoints').textContent =
+          `FG: ` + toolPoints.map((pp,i)=>`(${pp.x},${pp.y})`).join(' ') +
+          (bgPoints.length ? ` | BG: ` + bgPoints.map((pp,i)=>`(${pp.x},${pp.y})`).join(' ') : '');
+        if (autoDetect) scheduleSeedDetection();
+      }
+      drawCanvas();
+    }
+    function onCanvasMouseDown(ev) {
+      if (!img.src) return;
+      if (!ev.shiftKey) return; // Shift+drag to draw ROI
+      roiDrag = canvasCoords(ev);
+      ev.preventDefault();
+    }
+    function onCanvasMouseMove(ev) {
+      if (!img.src || !roiDrag) return;
+      const p = canvasCoords(ev);
+      const x1 = Math.max(0, Math.min(roiDrag.x, p.x));
+      const y1 = Math.max(0, Math.min(roiDrag.y, p.y));
+      const x2 = Math.min(img.width, Math.max(roiDrag.x, p.x));
+      const y2 = Math.min(img.height, Math.max(roiDrag.y, p.y));
+      roi = {x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1)};
+      drawCanvas();
+    }
+    function onCanvasMouseUp(ev) {
+      if (!roiDrag) return;
+      roiDrag = null;
+      if (autoDetect) scheduleSeedDetection();
+    }
+    function scheduleSeedDetection() {
+      if (seedDetectTimer) clearTimeout(seedDetectTimer);
+      seedDetectTimer = setTimeout(() => detectToolFromClicks(true), 200);
+    }
+    async function submitProcess() {
+      const fileInput = $('file');
+      const dist = parseFloat($('distance').value);
+      if (!fileInput.files[0]) { alert('Choose an image first'); return; }
+      if (rulerPoints.length !== 2) { alert('Click two points on the ruler'); return; }
+      if (!(dist > 0)) { alert('Enter a distance in mm'); return; }
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      fd.append('x1', rulerPoints[0].x);
+      fd.append('y1', rulerPoints[0].y);
+      fd.append('x2', rulerPoints[1].x);
+      fd.append('y2', rulerPoints[1].y);
+      fd.append('orig_w', img.width);
+      fd.append('orig_h', img.height);
+      fd.append('distance_mm', dist);
+      $('status').textContent = 'Processing...';
+      try {
+        const resp = await fetch('/web/process_manual_scale', { method: 'POST', body: fd });
+        if (!resp.ok) { throw new Error('Server error: ' + resp.status); }
+        const data = await resp.json();
+        $('status').textContent = 'Done';
+        pxPerMm = data.px_per_mm || null;
+        $('pxmm').textContent = (pxPerMm || 0).toFixed(3) + ' px/mm';
+        $('dims').textContent = JSON.stringify(data.dimensions || {}, null, 2);
+        $('svg').value = data.svg || '';
+        $('svgFrame').srcdoc = data.svg || '';
+        currentOutline = [];
+        drawCanvas();
+        // Re-run AI-guided detection to update dimensions/SVG using the new scale
+        setTimeout(() => { runAIGuidedDetection(); }, 50);
+      } catch (e) {
+        $('status').textContent = 'Error: ' + e.message;
+      }
+    }
+    async function detectToolFromClicks(isAuto = false) {
+      const fileInput = $('file');
+      if (!fileInput.files[0]) { alert('Choose an image first'); return; }
+      if (toolPoints.length === 0 && bgPoints.length === 0 && !roi) { if (!isAuto) alert('Add seeds or draw an ROI (Shift+drag)'); return; }
+      if (seedDetectInFlight) { pendingSeedRun = true; return; }
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      // Convert seeds and ROI to processed coords if known
+      const sx = (procW && img.width) ? (procW / img.width) : 1;
+      const sy = (procH && img.height) ? (procH / img.height) : 1;
+      const tp = toolPoints.map(p => ({x: Math.round(p.x * sx), y: Math.round(p.y * sy)}));
+      const bp = bgPoints.map(p => ({x: Math.round(p.x * sx), y: Math.round(p.y * sy)}));
+      fd.append('points', JSON.stringify(tp));
+      if (bp.length > 0) fd.append('bg_points', JSON.stringify(bp));
+      if (pxPerMm && pxPerMm > 0) fd.append('px_per_mm', pxPerMm);
+      if (lastMaskB64) fd.append('prev_mask', lastMaskB64);
+      if (roi) {
+        const r = {x: Math.round(roi.x * sx), y: Math.round(roi.y * sy), w: Math.round(roi.w * sx), h: Math.round(roi.h * sy)};
+        fd.append('roi', JSON.stringify(r));
+      }
+      if (window.lastYoloMaskB64) fd.append('yolo_mask', window.lastYoloMaskB64);
+      fd.append('smoothing_level', String(smoothLevel));
+      fd.append('offset_mm', String(offsetMm || 0));
+      if (!isAuto) $('statusTool').textContent = 'Detecting...';
+      seedDetectInFlight = true;
+      try {
+        const resp = await fetch('/web/interactive_tool_outline', { method: 'POST', body: fd });
+        if (!resp.ok) throw new Error('Server error: ' + resp.status);
+        const data = await resp.json();
+        if (!isAuto) $('statusTool').textContent = 'Done';
+        currentOutline = (data.outline || []).map(pt => [pt[0], pt[1]]);
+        window.currentOffsetOutline = (data.offset_outline || []).map(pt => [pt[0], pt[1]]);
+        lastMaskB64 = data.mask_png || null;
+        $('dims').textContent = JSON.stringify(data.dimensions || {}, null, 2);
+        $('svg').value = data.svg || '';
+        if (data.svg) $('svgFrame').srcdoc = data.svg;
+        drawCanvas();
+      } catch (e) {
+        if (!isAuto) $('statusTool').textContent = 'Error: ' + e.message;
+      }
+      seedDetectInFlight = false;
+      if (pendingSeedRun) { pendingSeedRun = false; setTimeout(() => detectToolFromClicks(true), 50); }
+    }
+    // Full detection removed in simplified flow
+    async function runAIGuidedDetection() {
+      const fileInput = $('file');
+      if (!fileInput.files[0]) { alert('Choose an image first'); return; }
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      let ppm = pxPerMm;
+      const dist = parseFloat($('distance').value);
+      if ((!ppm || !(ppm > 0)) && rulerPoints.length === 2 && (dist > 0)) {
+        const dx = rulerPoints[1].x - rulerPoints[0].x;
+        const dy = rulerPoints[1].y - rulerPoints[0].y;
+        const px = Math.hypot(dx, dy);
+        ppm = px / dist;
+      }
+      if (ppm && ppm > 0) fd.append('px_per_mm', ppm);
+      fd.append('smoothing_level', String(smoothLevel));
+      fd.append('offset_mm', String(offsetMm || 0));
+      $('statusAI').textContent = 'Asking AI + detecting...';
+      try {
+        const resp = await fetch('/web/ai_guided_detection', { method: 'POST', body: fd });
+        if (!resp.ok) throw new Error('Server error: ' + resp.status);
+        const data = await resp.json();
+        $('statusAI').textContent = 'Done';
+        pxPerMm = data.px_per_mm || ppm || null;
+        $('pxmm').textContent = (pxPerMm || 0).toFixed(3) + ' px/mm';
+        detections = data.detections || [];
+        window.lastYoloMaskB64 = data.top_mask_png || null;
+        if (data.image_width && data.image_height) { procW = data.image_width; procH = data.image_height; }
+        if (detections.length > 0) {
+          currentOutline = detections[0].outline || [];
+          window.currentOffsetOutline = detections[0].offset_outline || [];
+          $('dims').textContent = JSON.stringify(detections[0].dimensions || {}, null, 2);
+          if (detections[0].svg) { $('svg').value = detections[0].svg; $('svgFrame').srcdoc = detections[0].svg; }
+        }
+        drawCanvas();
+        const list = $('detList');
+        if (list) {
+          list.innerHTML = '';
+          detections.forEach((d, i) => {
+            const li = document.createElement('li');
+            li.textContent = `${i+1}. ${d.class_name || 'tool'} ${(d.confidence? '('+(d.confidence*100).toFixed(0)+'%)':'')}`;
+            li.style.cursor = 'pointer';
+            li.onclick = () => { currentOutline = d.outline || []; $('dims').textContent = JSON.stringify(d.dimensions || {}, null, 2); if (d.svg) { $('svg').value = d.svg; $('svgFrame').srcdoc = d.svg; } drawCanvas(); };
+            list.appendChild(li);
+          });
+        }
+      } catch (e) {
+        $('statusAI').textContent = 'Error: ' + e.message + ' (Ensure OPENAI_API_KEY and openai package are available on server)';
+      }
+    }
+    function resetSelection() {
+      toolPoints = []; bgPoints = []; currentOutline = []; $('toolPoints').textContent = 'Cleared. Click on the tool to seed detection.'; drawCanvas();
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+      $('file').addEventListener('change', loadFile);
+      $('canvas').addEventListener('click', onCanvasClick);
+      $('canvas').addEventListener('mousedown', onCanvasMouseDown);
+      $('canvas').addEventListener('mousemove', onCanvasMouseMove);
+      window.addEventListener('mouseup', onCanvasMouseUp);
+      $('go').addEventListener('click', submitProcess);
+      $('detect').addEventListener('click', detectToolFromClicks);
+      $('resetSel').addEventListener('click', resetSelection);
+      $('clearRoi').addEventListener('click', () => { roi = null; drawCanvas(); });
+      $('autoDetect').addEventListener('change', (e) => { autoDetect = e.target.checked; });
+      $('aiDetect').addEventListener('click', runAIGuidedDetection);
+      $('smooth').addEventListener('input', (e) => { smoothLevel = parseInt(e.target.value, 10) || 0; $('smoothVal').textContent = String(smoothLevel); if (autoDetect) scheduleSeedDetection(); });
+      $('offset').addEventListener('change', (e) => { offsetMm = parseInt(e.target.value, 10) || 0; if (autoDetect) scheduleSeedDetection(); });
+      document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', (e) => { mode = e.target.value; }));
+    });
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">BatchGrids</div>
+      <div class="badge">Scale: <span id="pxmm">–</span></div>
+    </header>
+
+    <div class="toolbar">
+      <div class="tool">
+        <label>Image</label>
+        <input id="file" type="file" accept="image/*,.heic,.heif" />
+      </div>
+      <div class="tool">
+        <label>Action</label>
+        <div class="row" style="gap:10px">
+          <label class="muted"><input type="radio" name="mode" value="ruler" checked> Set Scale</label>
+          <label class="muted"><input type="radio" name="mode" value="tool"> Seed/Refine</label>
+        </div>
+      </div>
+      <div class="tool">
+        <label>Ruler (mm)</label>
+        <input id="distance" type="number" value="100" min="1" step="1" />
+      </div>
+      <div class="tool">
+        <label>Smoothing</label>
+        <div class="row" style="gap:8px">
+          <input id="smooth" type="range" min="0" max="100" value="0" step="1" />
+          <span id="smoothVal" class="muted" style="min-width:22px; text-align:right">0</span>
+        </div>
+      </div>
+      <div class="tool">
+        <label>Offset (mm)</label>
+        <input id="offset" type="number" value="0" step="1" min="-20" max="50" />
+      </div>
+      <div class="row" style="justify-content:flex-end; gap:8px">
+        <button id="go" class="btn">Set Scale</button>
+        <button id="aiDetect" class="btn">AI Guidance</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="card">
+        <div class="row" style="margin-bottom:8px">
+          <div id="uploadStatus" class="muted">No file selected</div>
+          <div class="muted">
+            <span id="status" class="badge"></span>
+            <span id="statusAI" class="badge"></span>
+            <span id="statusTool" class="badge"></span>
+          </div>
+        </div>
+        <canvas id="canvas"></canvas>
+        <div class="muted" style="margin-top:8px">Tip: Shift+drag to draw an ROI. Click to add seeds. Auto-refine will update after changes.</div>
+        <details id="advRefine" style="margin-top:10px">
+          <summary>Advanced Refine</summary>
+          <div class="row" style="gap:10px; margin-top:8px">
+            <label class="muted"><input type="radio" name="seedType" value="fg" checked> Foreground</label>
+            <label class="muted"><input type="radio" name="seedType" value="bg"> Background</label>
+            <label class="muted"><input id="autoDetect" type="checkbox" checked> Auto-refine</label>
+            <button id="detect" class="btn">Refine Now</button>
+            <button id="resetSel" class="btn" type="button">Clear Seeds</button>
+            <button id="clearRoi" class="btn" type="button">Clear ROI</button>
+          </div>
+          <div id="toolPoints" class="muted" style="margin-top:6px"></div>
+          <div id="points" class="muted" style="margin-top:4px"></div>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="label">SVG Preview</div>
+        <iframe id="svgFrame" class="svg-out"></iframe>
+        <div class="label" style="margin-top:10px">SVG (copy/save)</div>
+        <textarea id="svg" class="svg-out" style="height: 160px"></textarea>
+        <div class="label" style="margin-top:10px">Dimensions</div>
+        <pre id="dims" class="svg-out" style="height:120px"></pre>
+        <div class="label" style="margin-top:10px">AI Detections</div>
+        <ul id="detList" style="max-height:120px; overflow-y:auto; font-size:14px; margin:0; padding-left:18px;"></ul>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

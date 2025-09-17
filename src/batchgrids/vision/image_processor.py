@@ -8,6 +8,7 @@ import json
 
 from batchgrids.vision.apriltag_detector import AprilTagDetector, CalibrationResult
 from batchgrids.vision.yolo_segmenter import YOLOSegmenter, YOLOPrediction
+from batchgrids.vision.ruler_calibrator import RulerCalibrator
 from batchgrids.config import settings
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ class ProcessingResult:
     needs_review: bool = False
     review_reason: Optional[str] = None
     processing_time_ms: float = 0.0
+    # Ruler fallback info
+    ruler_px_per_mm: Optional[float] = None
+    ruler_roi_bbox: Optional[Tuple[int, int, int, int]] = None
 
 
 class ImageProcessor:
@@ -42,37 +46,69 @@ class ImageProcessor:
     def __init__(self):
         self.apriltag_detector = AprilTagDetector()
         self.yolo_segmenter = YOLOSegmenter()
+        self.ruler_calibrator = RulerCalibrator()
     
-    def process_image(self, image: np.ndarray) -> ProcessingResult:
+    def process_image(self, image: np.ndarray, px_per_mm_override: Optional[float] = None) -> ProcessingResult:
         """Complete image processing pipeline."""
         start_time = datetime.now()
         
         try:
-            # Step 1: Calibrate with AprilTags
-            logger.info("Starting AprilTag calibration")
-            calibration = self.apriltag_detector.calibrate_image(image)
-            
-            if not calibration.is_valid:
-                return ProcessingResult(
-                    calibration=calibration,
-                    success=False,
-                    error_message=f"Calibration failed: {calibration.error_message}",
-                    processing_time_ms=self._get_processing_time_ms(start_time)
+            # Step 1: Calibrate with AprilTags (unless manual override provided)
+            logger.info("Starting calibration")
+            if px_per_mm_override and px_per_mm_override > 0:
+                # Synthesize a minimal calibration result; no rectification
+                calibration = CalibrationResult(
+                    px_per_mm=px_per_mm_override,
+                    homography_matrix=np.eye(3),
+                    rectified_corners={},
+                    detected_tags=[],
+                    is_valid=False,
+                    error_message="Manual scale override"
                 )
+            else:
+                logger.info("Starting AprilTag calibration")
+                calibration = self.apriltag_detector.calibrate_image(image)
+            px_per_mm = calibration.px_per_mm
+            rectified_image = image
+
+            # Defaults for optional ruler info
+            ruler_px_per_mm = None
+            ruler_roi_bbox = None
             
-            logger.info(f"Calibration successful: {calibration.px_per_mm:.2f} px/mm")
-            
-            # Step 2: Rectify image
-            rectified_image = self.apriltag_detector.rectify_image(
-                image, calibration.homography_matrix
-            )
+            # Initialize review flags
+            needs_review = False
+            review_reason = None
+
+            manual_override = bool(px_per_mm_override and px_per_mm_override > 0)
+            if not calibration.is_valid and not manual_override:
+                # Try ruler-based fallback for scale
+                px_per_mm = 1.0
+                needs_review = True
+                review_reason = f"Calibration failed: {calibration.error_message} (using px units)"
+                # Explicitly skip ruler fallback (reverted to prior behavior)
+            else:
+                # Only rectify if we have a valid calibration (not manual override)
+                if calibration.is_valid:
+                    logger.info(f"Calibration successful: {calibration.px_per_mm:.2f} px/mm")
+                    h, w = image.shape[:2]
+                    rectified_image = self.apriltag_detector.rectify_image(
+                        image, calibration.homography_matrix, (w, h)
+                    )
+                else:
+                    # Manual scale override: do not rectify, keep original image coordinates
+                    rectified_image = image
             
             # Step 3: Segment with YOLO
             logger.info("Running YOLO segmentation")
             yolo_prediction = self.yolo_segmenter.segment_image(rectified_image)
             
             # Step 4: Check if needs review
-            needs_review, review_reason = self.yolo_segmenter.needs_review(yolo_prediction)
+            # Determine if review is needed (retain calibration fail reason if set)
+            if not calibration.is_valid:
+                # Keep the review flags set above
+                pass
+            else:
+                needs_review, review_reason = self.yolo_segmenter.needs_review(yolo_prediction)
             
             # Step 5: Extract tool information (if we have a good prediction)
             tool_outline = None
@@ -83,7 +119,7 @@ class ImageProcessor:
                 # Extract tool outline and dimensions
                 tool_data = self.yolo_segmenter.extract_tool_outline(
                     yolo_prediction.top_prediction.mask,
-                    calibration.px_per_mm
+                    px_per_mm
                 )
                 
                 tool_outline = tool_data["outline"]
@@ -93,10 +129,21 @@ class ImageProcessor:
                 svg_outline = self.yolo_segmenter.create_svg_outline(
                     tool_outline,
                     tool_dimensions,
-                    calibration.px_per_mm
+                    px_per_mm
                 )
                 
                 logger.info(f"Tool extracted: {tool_dimensions.get('length_mm', 0):.1f}mm length")
+            else:
+                # Fallback: classical segmentation if YOLO found nothing
+                logger.info("YOLO found no detections; attempting fallback edge-based segmentation")
+                fallback_mask = self._segment_by_edges(rectified_image)
+                if np.sum(fallback_mask) > 0:
+                    tool_data = self.yolo_segmenter.extract_tool_outline(fallback_mask, px_per_mm)
+                    tool_outline = tool_data["outline"]
+                    tool_dimensions = tool_data["dimensions"]
+                    svg_outline = self.yolo_segmenter.create_svg_outline(tool_outline, tool_dimensions, px_per_mm)
+                    needs_review = True
+                    review_reason = (review_reason + "; " if review_reason else "") + "YOLO missed object; used fallback segmentation"
             
             processing_time_ms = self._get_processing_time_ms(start_time)
             
@@ -110,7 +157,9 @@ class ImageProcessor:
                 success=True,
                 needs_review=needs_review,
                 review_reason=review_reason,
-                processing_time_ms=processing_time_ms
+                processing_time_ms=processing_time_ms,
+                ruler_px_per_mm=(px_per_mm if not calibration.is_valid else None),
+                ruler_roi_bbox=(ruler_roi_bbox if not calibration.is_valid else None)
             )
             
         except Exception as e:
@@ -208,6 +257,55 @@ class ImageProcessor:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
         return debug_image
+
+    def _segment_by_edges(self, image: np.ndarray) -> np.ndarray:
+        """Enhanced background-agnostic segmentation optimized for tool detection."""
+        if image is None:
+            return np.zeros((1, 1), dtype=np.uint8)
+        img = image.copy()
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img
+        
+        # Apply adaptive histogram equalization for better contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+        
+        # Light blur to reduce noise
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        
+        # More sensitive edge detection for tools
+        edges = cv2.Canny(gray, 30, 100)  # Lowered thresholds
+        
+        # Larger kernel and more iterations for better tool shape recovery
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        edges = cv2.dilate(edges, kernel, iterations=2)
+        filled = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=4)
+        
+        # Find contours and filter by area
+        contours, _ = cv2.findContours(filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return np.zeros_like(gray, dtype=np.uint8)
+        
+        # Filter out very small contours
+        min_area = gray.shape[0] * gray.shape[1] * 0.001  # 0.1% of image area
+        contours = [c for c in contours if cv2.contourArea(c) > min_area]
+        
+        if not contours:
+            return np.zeros_like(gray, dtype=np.uint8)
+            
+        # Get the largest contour (most likely the tool)
+        main = max(contours, key=cv2.contourArea)
+        mask = np.zeros_like(gray, dtype=np.uint8)
+        cv2.drawContours(mask, [main], -1, 1, thickness=cv2.FILLED)
+        
+        # Final morphological operations to clean up the mask
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, 
+                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+        
+        return mask.astype(np.uint8)
     
     def load_image(self, image_path: str) -> np.ndarray:
         """Load image from file path."""

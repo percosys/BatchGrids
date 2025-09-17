@@ -2,35 +2,42 @@ FROM python:3.11-slim
 
 # Install system dependencies for OpenCV
 RUN apt-get update && apt-get install -y \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgthread-2.0-0 \
     libgl1 \
-    libglu1-mesa \
-    pkg-config \
+    libglib2.0-0 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy project files
+# Copy sources and metadata
 COPY src/ ./src/
+COPY web/ ./web/
+COPY pyproject.toml ./
+COPY README.md ./
 
-# Install essential Python dependencies for computer vision
-RUN pip install --no-cache-dir \
-    opencv-python==4.8.1.78 \
+ENV PIP_NO_CACHE_DIR=1
+# Base runtime deps - no AprilTag dependency for simplified deployment
+RUN pip install \
     numpy==1.24.4 \
-    ultralytics==8.0.200 \
-    pillow==10.1.0
+    opencv-python-headless==4.8.1.78 \
+    pillow==10.1.0 \
+    ultralytics>=8.3.190 \
+    pillow-heif>=0.13.0 \
+    uvicorn[standard]>=0.24.0
 
-# Install AprilTag (may need to be built)
-RUN pip install --no-cache-dir apriltag || echo "AprilTag install failed, will use fallback"
+# Install project (brings FastAPI, Pydantic, etc.)
+RUN pip install .
 
-# Create output directory
+# App env
+ENV PYTHONPATH=/app/src
+ENV DATABASE_URL="sqlite:///./batchgrids.db"
+ENV SKIP_EXTERNAL_SERVICES=true
+ENV IS_DEVELOPMENT=false
+EXPOSE 8000
+
+# Create output dir
 RUN mkdir -p /app/output
 
-# Default command
-CMD ["python", "-c", "print('BatchGrids CV Container Ready')"]
+# Start FastAPI app
+CMD ["uvicorn", "batchgrids.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

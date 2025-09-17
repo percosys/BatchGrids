@@ -5,16 +5,24 @@ import argparse
 import cv2
 import numpy as np
 from pathlib import Path
+from PIL import Image, ImageDraw
 
 
 def generate_apriltag_image(tag_id: int, size: int = 200) -> np.ndarray:
-    """Generate an AprilTag image using OpenCV."""
-    # Create AprilTag detector to get the tag dictionary
-    detector = cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
-    
-    # Generate tag
-    tag_img = cv2.aruco.drawMarker(detector, tag_id, size)
-    
+    """Generate an AprilTag image using OpenCV (APRILTAG_36h11)."""
+    # Get predefined dictionary (newer API) or fallback
+    dictionary = (
+        cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+        if hasattr(cv2.aruco, "getPredefinedDictionary")
+        else cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
+    )
+    # Generate marker image (API varies by OpenCV version)
+    if hasattr(cv2.aruco, "drawMarker"):
+        tag_img = cv2.aruco.drawMarker(dictionary, int(tag_id), int(size))
+    elif hasattr(cv2.aruco, "generateImageMarker"):
+        tag_img = cv2.aruco.generateImageMarker(dictionary, int(tag_id), int(size))
+    else:
+        raise RuntimeError("OpenCV aruco module lacks drawMarker/generateImageMarker. Update opencv-contrib-python.")
     return tag_img
 
 
@@ -120,33 +128,118 @@ def create_calibration_mat(output_path: str, mat_size_mm: int = 300, tag_size_mm
 
 def main():
     parser = argparse.ArgumentParser(description="Generate AprilTag calibration mat for BatchGrids")
-    parser.add_argument("--output", "-o", default="calibration_mat.png", help="Output file path")
-    parser.add_argument("--size", "-s", type=int, default=300, help="Mat size in mm (default: 300)")
+    parser.add_argument("--output", "-o", default="output/Calibration_Mat_300dpi.png", help="Output PNG file path")
+    parser.add_argument("--size", "-s", type=int, default=260, help="Mat size in mm (default: 260; fits Letter)")
     parser.add_argument("--tag-size", "-t", type=int, default=40, help="Tag size in mm (default: 40)")
     parser.add_argument("--dpi", "-d", type=int, default=300, help="Print resolution (default: 300)")
+    parser.add_argument("--pdf", help="Optional PDF output path (Letter or A4 page)")
+    parser.add_argument("--page-size", choices=["letter", "a4"], default="letter", help="PDF page size (default: letter)")
+    parser.add_argument("--orientation", choices=["auto", "portrait", "landscape"], default="auto", help="PDF page orientation (default: auto)")
     
     args = parser.parse_args()
     
     try:
         print(f"Generating calibration mat...")
-        print(f"  Mat size: {args.size}mm")
-        print(f"  Tag size: {args.tag_size}mm")
+        orig_mat_size = args.size
+        orig_tag_size = args.tag_size
+
+        # If producing a PDF, ensure the mat and tag sizes fit the chosen page orientation at 1:1 scale
+        fit_mat_size = orig_mat_size
+        fit_tag_size = orig_tag_size
+        if args.pdf:
+            if args.page_size == "letter":
+                base_w_mm, base_h_mm = 215.9, 279.4
+            else:
+                base_w_mm, base_h_mm = 210.0, 297.0
+            # Choose orientation as earlier logic
+            if args.orientation == "portrait":
+                page_w_mm, page_h_mm = base_w_mm, base_h_mm
+            elif args.orientation == "landscape":
+                page_w_mm, page_h_mm = base_h_mm, base_w_mm
+            else:
+                # Auto orientation to maximize min dimension available
+                if orig_mat_size <= min(base_w_mm, base_h_mm):
+                    page_w_mm, page_h_mm = base_w_mm, base_h_mm
+                else:
+                    page_w_mm, page_h_mm = base_h_mm, base_w_mm
+            # Leave a small printable margin (mm)
+            margin_mm = 5.0
+            max_square_mm = max(0.0, min(page_w_mm, page_h_mm) - 2 * margin_mm)
+            # Ensure mat fits page
+            fit_mat_size = min(orig_mat_size, int(max_square_mm))
+            # Ensure tags fit inside the mat with 200mm spacing (centers at +/-100mm)
+            # Condition: fit_mat_size >= 200 + fit_tag_size
+            if fit_mat_size < 200 + fit_tag_size:
+                fit_tag_size = max(5, int(fit_mat_size - 200))
+            if fit_tag_size <= 0:
+                raise ValueError(
+                    "Mat too small to contain 200mm spacing. Use larger paper, reduce mat size less aggressively, or lower spacing in code."
+                )
+
+        print(f"  Mat size: {fit_mat_size}mm (square)")
+        print(f"  Tag size: {fit_tag_size}mm")
         print(f"  Resolution: {args.dpi} DPI")
         
-        mat = create_calibration_mat(args.output, args.size, args.tag_size, args.dpi)
+        mat = create_calibration_mat(args.output, fit_mat_size, fit_tag_size, args.dpi)
         
         # Save image
-        success = cv2.imwrite(args.output, mat)
+        out_png = Path(args.output)
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        success = cv2.imwrite(str(out_png), mat)
         if not success:
-            print(f"Error: Failed to save image to {args.output}")
+            print(f"Error: Failed to save image to {out_png}")
             return 1
-        
-        print(f"✓ Calibration mat saved: {args.output}")
+        print(f"✓ Calibration mat PNG saved: {out_png}")
+
+        # Optional PDF page with mat centered at actual size
+        if args.pdf:
+            # Page sizes in mm
+            if args.page_size == "letter":
+                base_w_mm, base_h_mm = 215.9, 279.4
+            else:  # a4
+                base_w_mm, base_h_mm = 210.0, 297.0
+            # Determine orientation
+            if args.orientation == "portrait":
+                page_w_mm, page_h_mm = base_w_mm, base_h_mm
+            elif args.orientation == "landscape":
+                page_w_mm, page_h_mm = base_h_mm, base_w_mm
+            else:  # auto
+                # Choose orientation that fits the mat without scaling, if possible
+                mat_w_mm = args.size
+                mat_h_mm = args.size
+                # Try portrait first
+                if mat_w_mm <= base_w_mm and mat_h_mm <= base_h_mm:
+                    page_w_mm, page_h_mm = base_w_mm, base_h_mm
+                # Then landscape
+                elif mat_w_mm <= base_h_mm and mat_h_mm <= base_w_mm:
+                    page_w_mm, page_h_mm = base_h_mm, base_w_mm
+                else:
+                    # As a last resort, use landscape; warn will overflow margins
+                    page_w_mm, page_h_mm = base_h_mm, base_w_mm
+            # Convert to px at requested DPI
+            def mm_to_px(mm):
+                return int(round(mm * args.dpi / 25.4))
+            page_w_px, page_h_px = mm_to_px(page_w_mm), mm_to_px(page_h_mm)
+            page = Image.new("RGB", (page_w_px, page_h_px), color=(255, 255, 255))
+            # Convert mat to RGB for PIL
+            mat_rgb = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+            mat_img = Image.fromarray(mat_rgb)
+            # Center placement
+            x = (page_w_px - mat_img.width) // 2
+            y = (page_h_px - mat_img.height) // 2
+            page.paste(mat_img, (max(0, x), max(0, y)))
+            # Title
+            draw = ImageDraw.Draw(page)
+            draw.text((20, 20), f"BatchGrids Calibration Mat (Tags 0–3, 200mm spacing)", fill=(0, 0, 0))
+            out_pdf = Path(args.pdf)
+            out_pdf.parent.mkdir(parents=True, exist_ok=True)
+            page.save(str(out_pdf), "PDF", resolution=args.dpi)
+            print(f"✓ Calibration mat PDF saved: {out_pdf}")
         print(f"\nPrint Instructions:")
         print(f"  1. Print at ACTUAL SIZE (no scaling)")
         print(f"  2. Use high-quality paper (matte preferred)")
         print(f"  3. Ensure tags are crisp and black/white")
-        print(f"  4. Verify tag spacing with ruler (should be 200mm)")
+        print(f"  4. Verify tag spacing with ruler (should be 200mm center-to-center)")
         
         return 0
         

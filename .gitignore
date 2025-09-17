@@ -205,3 +205,42 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific exclusions
+*.pt                    # PyTorch models (yolo*.pt files)
+*.onnx                  # ONNX models
+*.wts                   # Weight files
+.DS_Store               # macOS system files
+output/                 # Generated output files and test results
+archive_experimental/   # Experimental code archive
+web/                    # Generated web assets (if not committed intentionally)
+
+# API Keys and secrets
+.env                    # Already covered above but emphasizing
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+
+# Development artifacts and generated files
+*.jpeg                  # Test images
+*.jpg                   # Test images  
+*.png                   # Test images (except documentation)
+*.svg                   # Generated SVG files
+*.pdf                   # Generated PDF files
+*.json                  # Result files (unless schema/config)
+*.heic                  # HEIC image files
+*.webp                  # WebP image files
+*.tiff                  # TIFF image files
+*.bmp                   # Bitmap image files
+
+# Generated outputs and sample data
+output/                 # All generated output files and test results
+samples/                # Sample images and test data
+test_data/              # Test datasets
+uploads/                # User uploaded files
+temp/                   # Temporary processing files
+
+# Temporary files
+=*                      # Shell assignment artifacts
