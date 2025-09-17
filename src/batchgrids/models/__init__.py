@@ -7,6 +7,7 @@ from batchgrids.models.grid_bin import GridBin
 from batchgrids.models.image import Image
 from batchgrids.models.prediction import Prediction
 from batchgrids.models.tool import Tool
+from batchgrids.models.tool_svg import ToolSvg
 from batchgrids.models.user import User
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "GridBin",
     "Assignment",
     "Export",
+    "ToolSvg",
 ]

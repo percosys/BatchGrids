@@ -10,7 +10,18 @@ import os
 skip_external = os.getenv('SKIP_EXTERNAL_SERVICES', '').lower() in ('true', '1', 'yes')
 
 if not skip_external:
-    from batchgrids.api.routers import auth, bins, drawers, exports, health, images, lookup, tools, web
+    from batchgrids.api.routers import (
+        auth,
+        bins,
+        drawers,
+        exports,
+        health,
+        images,
+        lookup,
+        tool_svgs,
+        tools,
+        web,
+    )
     from batchgrids.database import async_engine
     from batchgrids.models import Base
 else:
@@ -91,6 +102,7 @@ def create_app() -> FastAPI:
         app.include_router(drawers.router, prefix="/drawers", tags=["drawers"])
         app.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
         app.include_router(exports.router, prefix="/exports", tags=["exports"])
+        app.include_router(tool_svgs.router, prefix="/tool-svgs", tags=["tool-svgs"])
 
     # Serve a simple frontend (if present)
     # Serve from project root /web (parents[3] from src/batchgrids/api/main.py)

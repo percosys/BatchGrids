@@ -19,3 +19,4 @@ class User(Base):
     drawers = relationship("Drawer", back_populates="user")
     grid_bins = relationship("GridBin", back_populates="user")
     exports = relationship("Export", back_populates="user")
+    tool_svgs = relationship("ToolSvg", back_populates="user")
